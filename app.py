@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify, render_template
-from youtube_transcript_api import YouTubeTranscriptApi
+# Make sure it's just this — no extra imports
+from youtube_transcript_api import YouTubeTranscriptApi 
 import anthropic
 import os
 import re
@@ -62,9 +63,8 @@ def summarize():
         return jsonify({"error": "Could not extract video ID. Please check the URL."}), 400
 
     try:
-        ytt_api = YouTubeTranscriptApi()
-        fetched = ytt_api.fetch(video_id, languages=["en", "en-US", "en-GB"])
-        full_text = " ".join([t.text for t in fetched])
+        fetched = YouTubeTranscriptApi.get_transcript(video_id, languages=["en", "en-US", "en-GB"])
+        full_text = " ".join([t["text"] for t in fetched])
     except Exception as e:
         return jsonify({"error": f"Could not fetch transcript: {str(e)}"}), 400
 
