@@ -1,10 +1,11 @@
 from flask import Flask, request, jsonify, render_template
-# Make sure it's just this — no extra imports
-from youtube_transcript_api import YouTubeTranscriptApi 
 import anthropic
 import os
 import re
 import json
+import glob
+import tempfile
+import yt_dlp
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -46,9 +47,114 @@ def extract_video_id(url):
         return url.strip()
     return None
 
+def parse_vtt(content):
+    """Convert VTT subtitle file to clean plain text."""
+    lines = content.split('\n')
+    text_lines = []
+    for line in lines:
+        line = line.strip()
+        # Skip WEBVTT header, timestamps, empty lines, numeric cue IDs
+        if not line:
+            continue
+        if line.startswith('WEBVTT') or line.startswith('Kind:') or line.startswith('Language:'):
+            continue
+        if '-->' in line:
+            continue
+        if re.match(r'^\d+$', line):
+            continue
+        # Remove HTML/VTT tags like <00:00:01.000>, <c>, </c>, <b>, etc.
+        line = re.sub(r'<[^>]+>', '', line)
+        line = line.strip()
+        if not line:
+            continue
+        # Skip duplicate consecutive lines (common in VTT rolling captions)
+        if text_lines and text_lines[-1] == line:
+            continue
+        text_lines.append(line)
+    return ' '.join(text_lines)
+
+def get_transcript(video_id):
+    """Fetch transcript using yt-dlp — works with auto-generated and manual subtitles."""
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    tmp_dir = tempfile.gettempdir()
+    output_path = os.path.join(tmp_dir, f"yt_sub_{video_id}")
+
+    # Clean up any leftover files from previous attempts
+    for f in glob.glob(f"{output_path}*"):
+        try:
+            os.remove(f)
+        except:
+            pass
+
+    ydl_opts = {
+        'writesubtitles': True,       # manual subtitles
+        'writeautomaticsub': True,    # auto-generated subtitles
+        'subtitleslangs': ['en', 'en-US', 'en-GB', 'en-AU'],
+        'subtitlesformat': 'vtt',
+        'skip_download': True,        # don't download the video
+        'outtmpl': output_path,
+        'quiet': True,
+        'no_warnings': True,
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+
+        # Find any downloaded .vtt subtitle file
+        vtt_files = glob.glob(f"{output_path}*.vtt")
+
+        if not vtt_files:
+            # Try fetching with any available language and translate
+            available_subs = info.get('subtitles', {})
+            available_auto = info.get('automatic_captions', {})
+            all_langs = list(available_subs.keys()) + list(available_auto.keys())
+
+            if not all_langs:
+                return None, "This video has no subtitles or captions available."
+
+            # Retry with first available language
+            ydl_opts['subtitleslangs'] = [all_langs[0]]
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.extract_info(url, download=True)
+            vtt_files = glob.glob(f"{output_path}*.vtt")
+
+        if not vtt_files:
+            return None, "Could not download subtitles. The video may have captions disabled."
+
+        # Read and parse the subtitle file
+        with open(vtt_files[0], 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # Clean up temp files
+        for f in vtt_files:
+            try:
+                os.remove(f)
+            except:
+                pass
+
+        transcript = parse_vtt(content)
+
+        if not transcript.strip():
+            return None, "Transcript was empty after parsing."
+
+        return transcript, None
+
+    except yt_dlp.utils.DownloadError as e:
+        err = str(e)
+        if "private" in err.lower():
+            return None, "This video is private."
+        if "unavailable" in err.lower():
+            return None, "This video is unavailable."
+        return None, f"Could not access video: {err}"
+    except Exception as e:
+        return None, f"Unexpected error: {str(e)}"
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
+
 
 @app.route("/summarize", methods=["POST"])
 def summarize():
@@ -60,15 +166,13 @@ def summarize():
 
     video_id = extract_video_id(url)
     if not video_id:
-        return jsonify({"error": "Could not extract video ID. Please check the URL."}), 400
+        return jsonify({"error": "Invalid YouTube URL. Please check and try again."}), 400
 
-    try:
-        fetched = YouTubeTranscriptApi.get_transcript(video_id, languages=["en", "en-US", "en-GB"])
-        full_text = " ".join([t["text"] for t in fetched])
-    except Exception as e:
-        return jsonify({"error": f"Could not fetch transcript: {str(e)}"}), 400
+    transcript, error = get_transcript(video_id)
+    if error:
+        return jsonify({"error": error}), 400
 
-    trimmed_text = full_text[:12000]
+    trimmed_text = transcript[:12000]
 
     try:
         message = client.messages.create(
@@ -81,12 +185,16 @@ def summarize():
             }]
         )
         raw = message.content[0].text.strip()
+        raw = re.sub(r"^```json\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw)
         result = json.loads(raw)
         return jsonify(result)
+
     except json.JSONDecodeError:
         return jsonify({"error": "AI returned unexpected format. Please try again."}), 500
     except Exception as e:
         return jsonify({"error": f"AI error: {str(e)}"}), 500
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
