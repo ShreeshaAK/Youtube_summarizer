@@ -1,0 +1,5 @@
+flask
+yt-dlp
+anthropic
+python-dotenv
+gunicorn
