@@ -1,4 +1,0 @@
-flask
-youtube-transcript-api>=1.0.0anthropic
-python-dotenv
-gunicorn
