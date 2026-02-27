@@ -1,5 +1,5 @@
 flask
-yt-dlp
+youtube-transcript-api==0.6.3
 anthropic
 python-dotenv
 gunicorn
