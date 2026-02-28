@@ -1,5 +1,5 @@
 flask
-youtube-transcript-api==0.6.3
+youtube-transcript-api==1.2.4
 anthropic
 python-dotenv
 gunicorn
