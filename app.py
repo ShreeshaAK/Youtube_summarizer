@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify, render_template
 from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api.proxies import WebshareProxyConfig
 import anthropic
 import os
 import re
@@ -45,8 +46,24 @@ def extract_video_id(url):
         return url.strip()
     return None
 
+def create_ytt_client():
+    """Create YouTubeTranscriptApi client with proxy if configured."""
+    proxy_ip   = os.environ.get("PROXY_IP")
+    proxy_port = os.environ.get("PROXY_PORT")
+    proxy_user = os.environ.get("PROXY_USER")
+    proxy_pass = os.environ.get("PROXY_PASS")
+
+    if proxy_ip and proxy_port and proxy_user and proxy_pass:
+        proxy_config = WebshareProxyConfig(
+            proxy_username=proxy_user,
+            proxy_password=proxy_pass,
+        )
+        return YouTubeTranscriptApi(proxy_config=proxy_config)
+
+    return YouTubeTranscriptApi()
+
 def get_transcript(video_id):
-    ytt = YouTubeTranscriptApi()
+    ytt = create_ytt_client()
 
     # Try 1: Fetch English directly
     try:
@@ -57,7 +74,7 @@ def get_transcript(video_id):
     except Exception:
         pass
 
-    # Try 2: List all transcripts and translate to English
+    # Try 2: List all and translate to English
     try:
         transcript_list = ytt.list(video_id)
         for transcript in transcript_list:
