@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, render_template
-from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+from youtube_transcript_api import YouTubeTranscriptApi
 import anthropic
 import os
 import re
@@ -46,33 +46,35 @@ def extract_video_id(url):
     return None
 
 def get_transcript(video_id):
+    ytt = YouTubeTranscriptApi()
+
+    # Try 1: Fetch English directly
     try:
-        ytt = YouTubeTranscriptApi()
-
-        try:
-            fetched = ytt.fetch(video_id, languages=['en', 'en-US', 'en-GB', 'en-AU'])
-            text = " ".join([t.text for t in fetched])
+        fetched = ytt.fetch(video_id, languages=['en', 'en-US', 'en-GB', 'en-AU'])
+        text = " ".join([t.text for t in fetched])
+        if text.strip():
             return text, None
-        except Exception:
-            pass
-        try:
-            transcript_list = ytt.list(video_id)
-            for transcript in transcript_list:
-                try:
-                    if transcript.is_translatable:
-                        fetched = transcript.translate('en').fetch()
-                    else:
-                        fetched = transcript.fetch()
-                    text = " ".join([t.text for t in fetched])
-                    return text, None
-                except Exception:
-                    continue
-            return None, "No usable transcript found for this video."
-        except Exception as e:
-            return None, f"Could not list transcripts: {str(e)}"
+    except Exception:
+        pass
 
+    # Try 2: List all transcripts and translate to English
+    try:
+        transcript_list = ytt.list(video_id)
+        for transcript in transcript_list:
+            try:
+                if transcript.is_translatable:
+                    fetched = transcript.translate('en').fetch()
+                else:
+                    fetched = transcript.fetch()
+                text = " ".join([t.text for t in fetched])
+                if text.strip():
+                    return text, None
+            except Exception:
+                continue
+        return None, "No usable transcript found. Try a different video."
     except Exception as e:
         return None, f"Could not fetch transcript: {str(e)}"
+
 
 @app.route("/")
 def index():
