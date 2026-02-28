@@ -47,45 +47,32 @@ def extract_video_id(url):
 
 def get_transcript(video_id):
     try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        ytt = YouTubeTranscriptApi()
 
         try:
-            transcript = transcript_list.find_transcript(['en', 'en-US', 'en-GB', 'en-AU'])
-            fetched = transcript.fetch()
-            text = " ".join([t['text'] for t in fetched])
+            fetched = ytt.fetch(video_id, languages=['en', 'en-US', 'en-GB', 'en-AU'])
+            text = " ".join([t.text for t in fetched])
             return text, None
-        except NoTranscriptFound:
+        except Exception:
             pass
-
         try:
-            available = list(transcript_list)
-            if not available:
-                return None, "No transcripts available for this video."
-
-            chosen = None
-            for t in available:
-                if t.is_generated:
-                    chosen = t
-                    break
-            if not chosen:
-                chosen = available[0]
-
-            translated = chosen.translate('en')
-            fetched = translated.fetch()
-            text = " ".join([t['text'] for t in fetched])
-            return text, None
-
+            transcript_list = ytt.list(video_id)
+            for transcript in transcript_list:
+                try:
+                    if transcript.is_translatable:
+                        fetched = transcript.translate('en').fetch()
+                    else:
+                        fetched = transcript.fetch()
+                    text = " ".join([t.text for t in fetched])
+                    return text, None
+                except Exception:
+                    continue
+            return None, "No usable transcript found for this video."
         except Exception as e:
-            return None, f"Could not get transcript: {str(e)}"
+            return None, f"Could not list transcripts: {str(e)}"
 
-    except TranscriptsDisabled:
-        return None, "Transcripts are disabled for this video."
     except Exception as e:
-        err = str(e)
-        if "NoTranscriptFound" in err or "no element" in err.lower():
-            return None, "No transcript found for this video. Try a different video."
-        return None, f"Could not fetch transcript: {err}"
-
+        return None, f"Could not fetch transcript: {str(e)}"
 
 @app.route("/")
 def index():
